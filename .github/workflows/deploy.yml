@@ -1,0 +1,41 @@
+name: Deploy to SageMaker
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Log in to Amazon ECR
+      run: |
+        aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com
+
+    - name: Build and Push Docker image
+      run: |
+        docker build -t sagemaker-app .
+        docker tag sagemaker-app:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com/sagemaker-app:latest
+        docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com/sagemaker-app:latest
+
+    - name: Deploy SageMaker Model
+      run: |
+        aws sagemaker create-model --model-name my-sagemaker-model \
+          --primary-container Image=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com/sagemaker-app:latest \
+          --execution-role-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/sagemaker-execution-role
+
+        aws sagemaker create-endpoint-config --endpoint-config-name my-endpoint-config \
+          --production-variants VariantName=AllTraffic,ModelName=my-sagemaker-model,InitialInstanceCount=1,InstanceType=ml.m5.large
+
+        aws sagemaker create-endpoint --endpoint-name my-endpoint --endpoint-config-name my-endpoint-config
